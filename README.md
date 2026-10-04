@@ -5,7 +5,7 @@ Web app (PWA) de suivi de musculation pour iPhone, pensée pour être utilisée 
 Aucune dépendance externe, aucun serveur, aucun compte : tout tient dans une page HTML et les données restent sur le téléphone.
 
 ## Fonctionnalités
-
+ 
 **Pendant la séance**
 - Démarrage depuis un modèle de séance, date et heure enregistrées automatiquement.
 - Pour chaque exercice : réglages machine (modifiables d'un tap) et performance de la dernière fois.

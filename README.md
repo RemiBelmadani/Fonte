@@ -5,7 +5,7 @@ Web app (PWA) de suivi de musculation pour iPhone, pensée pour être utilisée 
 Aucune dépendance externe, aucun serveur, aucun compte : tout tient dans une page HTML et les données restent sur le téléphone.
 
 ## Fonctionnalités
- 
+
 **Pendant la séance**
 - Démarrage depuis un modèle de séance, date et heure enregistrées automatiquement.
 - Pour chaque exercice : réglages machine (modifiables d'un tap) et performance de la dernière fois.
@@ -14,12 +14,15 @@ Aucune dépendance externe, aucun serveur, aucun compte : tout tient dans une pa
 - Bouton « ✓ Série » : enregistre la série et lance le minuteur de repos (grand compte à rebours, bip et flash à la fin, ±15 s, bouton Passer).
 - Ajout de séries, de dégressives (plusieurs paliers), rep partielle (aucune / début / presque) et note d'exécution.
 - Exercices « durée » (ex. suspension à la barre) avec chrono intégré.
+- **Variantes** : un créneau du modèle peut proposer plusieurs exercices (ex. Tirage vertical ou Tractions). On choisit en séance ; chaque variante a son propre historique. Par défaut, l'app propose la dernière faite.
+- « Faire un autre exercice à la place » : remplace l'exercice du jour et l'ajoute aux variantes du modèle.
+- Renommer un exercice qui a un historique : l'app demande s'il s'agit du même exercice ou d'un nouveau (historique séparé).
 - Badge 🏆 immédiat en cas de record : poids max, reps à un poids donné, 1RM estimé (formule d'Epley, reps complètes uniquement).
 - Écran maintenu allumé (Wake Lock API).
 - Reprise automatique si l'app est fermée en cours de séance, minuteur compris.
 
 **Historique et progrès**
-- Liste des séances passées, détail consultable et modifiable (séries, date, suppression).
+- Liste des séances passées, détail consultable et modifiable : séries, date, ajout ou retrait d'un exercice, et « ⇄ Changer » pour rattacher des séries à un autre exercice (les records sont recalculés).
 - Par exercice : courbe du poids max et du 1RM estimé, volume par séance (poids × reps), meilleures reps par poids, chronologie des records.
 - Fréquence : séances par semaine (12 dernières semaines) et calendrier type heatmap (18 semaines).
 
@@ -78,8 +81,9 @@ Le fichier de sauvegarde JSON contient `exercises`, `templates` et `sessions`.
 ## Calculs
 
 - **1RM estimé (Epley)** : `poids × (1 + reps / 30)`, et simplement le poids si 1 rep. Reps complètes uniquement.
-- **Volume** : somme de `poids × reps` des séries et des dégressives. Pour les exercices en kg/bras, c'est le poids d'un bras qui est utilisé.
+- **Volume** : somme de `poids × reps` des séries et des dégressives, multipliée par 2 pour les exercices en kg/bras (charge totale déplacée).
 - **Records** : comparés à toutes les séries précédentes du même exercice (séances passées et séries précédentes de la séance en cours). Pas de badge lors de la toute première séance d'un exercice.
+- **Par bras / ensemble** : choix obligatoire à la création d'un exercice à charge.
 
 ## Limites connues
 

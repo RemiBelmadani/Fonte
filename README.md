@@ -21,9 +21,14 @@ Aucune dépendance externe, aucun serveur, aucun compte : tout tient dans une pa
 - Écran maintenu allumé (Wake Lock API).
 - Reprise automatique si l'app est fermée en cours de séance, minuteur compris.
 
+- **EMOM** : un exercice peut être réglé en EMOM (nombre de tours, durée d'un tour). Décompte de 5 s, bip à chaque tour, saisie des reps tour par tour ; chaque tour est enregistré comme une série.
+- **Suggestion de charge** (double progression) : fourchette de reps par exercice (8-12 par défaut). Si toutes les séries de la dernière fois ont atteint le max, la séance suivante est pré-remplie avec +1 pas de poids et les reps au bas de la fourchette.
+- **Résumé de fin de séance** comparé à la dernière séance du même modèle : volume, reps, progression ou recul par exercice.
+
 **Historique et progrès**
 - Liste des séances passées, détail consultable et modifiable : séries, date, ajout ou retrait d'un exercice, et « ⇄ Changer » pour rattacher des séries à un autre exercice (les records sont recalculés).
 - Par exercice : courbe du poids max et du 1RM estimé, volume par séance (poids × reps), meilleures reps par poids, chronologie des records.
+- Séries par muscle : 7 derniers jours comparés à la moyenne hebdomadaire des 4 semaines précédentes (muscle principal choisi pour chaque exercice).
 - Fréquence : séances par semaine (12 dernières semaines) et calendrier type heatmap (18 semaines).
 
 **Sauvegarde**

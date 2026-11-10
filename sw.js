@@ -2,7 +2,7 @@
 // Stratégie : on sert TOUJOURS la version en cache (instantané, marche sans réseau),
 // et en parallèle on télécharge la nouvelle version si le réseau est là.
 // => Une mise à jour publiée sur GitHub apparaît au lancement suivant.
-const CACHE = 'fonte-v2';
+const CACHE = 'fonte-v3';
 const ASSETS = [
   './',
   './index.html',

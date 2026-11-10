@@ -253,6 +253,16 @@ select.in{-webkit-appearance:none;appearance:none;font-weight:600;background-ima
 #toast.pr{background:var(--pr);color:#2a2000}
 .sum{text-align:center}.sum .big{font-size:48px}
 .prlist{text-align:left;margin-top:12px}.prlist div{padding:8px 0;border-bottom:1px solid var(--line)}
+/* Séances libres, alerte, bilan */
+.week .fr i{background:var(--gr);border-color:var(--gr)}
+.bar.fr{fill:var(--gr)}.hmf{fill:var(--gr)}
+.hrow.free .hdate b{color:var(--gr)}
+.guide{margin-top:12px;font-size:14px}
+.guide summary{color:var(--ac);font-weight:600;min-height:44px;display:flex;align-items:center;cursor:pointer}
+.guide ol{padding-left:22px;color:#cfcac2}.guide li{margin:9px 0}
+.guide b{color:var(--tx)}
+.bilan{white-space:pre-wrap;font-size:13px;line-height:1.45;background:var(--bg);border:1px solid var(--line);border-radius:14px;padding:12px;
+  max-height:46vh;overflow-y:auto;-webkit-overflow-scrolling:touch;-webkit-user-select:text;user-select:text;color:#cfcac2}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 </style>
 </head>
@@ -409,7 +419,27 @@ function guessMuscle(n) {
   for (const [re, m] of r) if (re.test(n)) return m;
   return 'Autre';
 }
-// Complète les exercices créés avec une version plus ancienne de l'app
+const GROUPS = ['Dos', 'Pecs', 'Épaules', 'Biceps', 'Triceps', 'Jambes', 'Abdos', 'Cardio', 'Autre'];
+const norm = s => String(s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+const m2g = m => ({ Quadriceps: 'Jambes', Ischios: 'Jambes', Fessiers: 'Jambes', Mollets: 'Jambes' })[m] || (GROUPS.includes(m) ? m : 'Autre');
+function groupsFromEx(ids) {
+  const g = [...new Set(ids.map(id => S.ex[id]).filter(Boolean).map(e => m2g(e.muscle || guessMuscle(e.name))))];
+  return g.length > 1 ? g.filter(x => x !== 'Autre') : g;
+}
+// « Dos Biceps Épaules » -> [Dos, Biceps, Épaules] ; sinon, déduit des exercices du modèle
+function guessTplGroups(t) {
+  const words = norm(t.name).split(/[^a-z]+/).filter(Boolean);
+  const g = GROUPS.filter(x => x !== 'Autre' && words.some(w => { const n = norm(x); return w === n || w + 's' === n || w === n + 's'; }));
+  return g.length ? g : groupsFromEx(t.exIds || []);
+}
+function sesGroups(s) {
+  if (s.groups && s.groups.length) return s.groups;
+  const t = s.tplId && S.tpl.find(x => x.id === s.tplId);
+  if (t && t.groups && t.groups.length) return t.groups;
+  return groupsFromEx(s.items.map(i => i.exId));
+}
+const isFree = s => s.kind === 'free';
+// Complète les données créées avec une version plus ancienne de l'app
 function migrate() {
   for (const e of Object.values(S.ex)) {
     let ch = false;
@@ -418,6 +448,7 @@ function migrate() {
     if (e.emom === undefined) { e.emom = 0; e.emomInt = 60; ch = true; }
     if (ch) saveEx(e);
   }
+  for (const t of S.tpl) if (!Array.isArray(t.groups)) { t.groups = guessTplGroups(t); saveTpl(t); }
 }
 async function seed() {
   const data = [
@@ -514,7 +545,7 @@ function computePR(s, ii, k) {
 function startSession(tplId) {
   if (active()) { UI.tab = 'seance'; return render(); }
   const t = S.tpl.find(x => x.id === tplId); if (!t) return;
-  const s = { id: uid(), tplId, name: t.name, start: Date.now(), end: null, cur: 0, rest: null, items: [] };
+  const s = { id: uid(), tplId, name: t.name, groups: (t.groups || []).slice(), start: Date.now(), end: null, cur: 0, rest: null, items: [] };
   s.items = t.exIds.filter(id => S.ex[id]).map(id => { const it = mkItem(pickVariant(t, id), s.start, s.id); it.slot = id; return it; });
   S.ses.push(s); saveSes(s); setMeta('active', s.id);
   UI.edit = null; UI.chrono = null;
@@ -544,7 +575,9 @@ async function keepAwake(on) {
   } catch (e) { /* non supporté */ }
 }
 document.addEventListener('visibilitychange', () => {
-  if (document.visibilityState === 'visible') { if (active()) keepAwake(true); tickRest(); if (active() && active().emom) tickEmom(); }
+  if (document.visibilityState === 'visible') {
+    if (UI.scTest) { UI.scTest = false; toast(`Pas de minuteur ? Vérifie le nom exact du raccourci : ${SC_NAME}`); }
+    if (active()) keepAwake(true); tickRest(); if (active() && active().emom) tickEmom(); }
 });
 
 /* ============ Son ============ */
@@ -578,13 +611,60 @@ function beep() {
   } catch (e) {}
 }
 
+/* ============ Alerte de fin de repos (app en arrière-plan) ============ */
+// iOS suspend le JavaScript d'une web app en arrière-plan : deux façons de sonner quand même.
+// 1) « ios » : on lance un Raccourci qui démarre le minuteur natif de l'iPhone.
+// 2) « audio » : on joue une piste (silence puis bip) de la durée du repos ; un média continue de jouer.
+const SC_NAME = 'Repos Fonte';
+const alertMode = () => S.meta.alertMode || 'ios';
+// Tant que le raccourci n'a jamais été testé, on reste sur le bip dans l'app (évite une erreur à chaque série)
+const effMode = () => alertMode() === 'ios' && !S.meta.scReady ? 'app' : alertMode();
+function openShortcut(sec) {
+  location.href = `shortcuts://run-shortcut?name=${encodeURIComponent(SC_NAME)}&input=text&text=${Math.max(1, Math.round(sec))}`;
+}
+let restAudio = null, restAudioUrl = null;
+function restWav(sec) {
+  const sr = 8000, n = Math.round((sec + 1.2) * sr), b = new Uint8Array(44 + n), v = new DataView(b.buffer);
+  const str = (o, t) => { for (let i = 0; i < t.length; i++) b[o + i] = t.charCodeAt(i); };
+  str(0, 'RIFF'); v.setUint32(4, 36 + n, true); str(8, 'WAVE'); str(12, 'fmt '); v.setUint32(16, 16, true);
+  v.setUint16(20, 1, true); v.setUint16(22, 1, true); v.setUint32(24, sr, true); v.setUint32(28, sr, true);
+  v.setUint16(32, 1, true); v.setUint16(34, 8, true); str(36, 'data'); v.setUint32(40, n, true);
+  b.fill(128, 44);                                  // silence (PCM 8 bits)
+  [[0, .2, 880], [.28, .2, 880], [.56, .35, 1320]].forEach(([d, len, f]) => {
+    const s0 = Math.round((sec + d) * sr), m = Math.round(len * sr);
+    for (let i = 0; i < m && s0 + i < n; i++) {
+      const env = Math.min(1, i / 80, (m - i) / 400);
+      b[44 + s0 + i] = 128 + Math.round(110 * env * Math.sin(2 * Math.PI * f * i / sr));
+    }
+  });
+  return new Blob([b], { type: 'audio/wav' });
+}
+function playRestAudio(sec) {
+  stopRestAudio();
+  try { if (navigator.audioSession) navigator.audioSession.type = 'ambient'; } catch (e) {}   // se mixe avec la musique
+  try {
+    restAudioUrl = URL.createObjectURL(restWav(sec));
+    restAudio = new Audio(restAudioUrl);
+    restAudio.play().catch(() => toast('iOS a refusé la lecture audio'));
+  } catch (e) {}
+}
+function stopRestAudio() {
+  try { if (restAudio) { restAudio.pause(); restAudio.removeAttribute('src'); restAudio.load(); } } catch (e) {}
+  if (restAudioUrl) URL.revokeObjectURL(restAudioUrl);
+  restAudio = null; restAudioUrl = null;
+}
+function launchAlert(sec) {
+  const m = effMode();
+  if (m === 'ios') openShortcut(sec); else if (m === 'audio') playRestAudio(sec);
+}
+
 /* ============ Minuteur de repos ============ */
 let restTimer = null, restFired = false;
 const ARC = 2 * Math.PI * 86;
 function startRest(sec, next, pr) {
   const s = active(); if (!s || !sec) return;
   s.rest = { end: Date.now() + sec * 1000, total: sec, next, pr: pr || [] };
-  saveSes(s); showRest();
+  saveSes(s); showRest(); launchAlert(sec);
 }
 function showRest() {
   const s = active(); if (!s || !s.rest) return;
@@ -603,14 +683,15 @@ function tickRest() {
   if (rem > 0) { $('#restT').textContent = fmtClock(Math.ceil(rem)); return; }
   $('#restT').textContent = 'Go';
   if (!restFired) {
-    restFired = true; o.classList.add('fin'); beep();
+    restFired = true; o.classList.add('fin');
+    if (effMode() === 'app' && rem > -2) beep();      // en modes iOS et audio, le son vient déjà d'ailleurs
     try { navigator.vibrate && navigator.vibrate([200, 100, 200]); } catch (e) {}
   }
   if (rem < -45) closeRest();
 }
 function closeRest() {
   const s = active(); if (s && s.rest) { s.rest = null; saveSes(s); }
-  $('#rest').hidden = true; clearInterval(restTimer);
+  $('#rest').hidden = true; clearInterval(restTimer); stopRestAudio();
 }
 
 /* ============ EMOM ============ */
@@ -736,12 +817,14 @@ function lineChart(series, f = v => fmt(Math.round(v * 10) / 10), h = 190) {
   return `<svg viewBox="0 0 ${W} ${h}">${g}</svg>${leg}`;
 }
 function barChart(items, f = v => v, hl = -1, h = 150) {
-  const W = 340, pt = 16, pb = 22, n = items.length || 1, bw = (W - 8) / n, max = Math.max(1, ...items.map(i => i.v));
+  // it.fr (facultatif) : part « séances libres » empilée au-dessus de it.v
+  const W = 340, pt = 16, pb = 22, n = items.length || 1, bw = (W - 8) / n, max = Math.max(1, ...items.map(i => i.v + (i.fr || 0)));
   let g = `<line class="gl" x1="0" x2="${W}" y1="${h - pb}" y2="${h - pb}"/>`;
   items.forEach((it, i) => {
-    const bh = it.v / max * (h - pt - pb), x = 4 + i * bw + bw * .17, w = bw * .66, y = h - pb - bh;
-    if (it.v > 0) g += `<rect class="bar${i === hl ? ' hl' : ''}" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${bh.toFixed(1)}" rx="3"/>
-      <text class="bv" x="${(x + w / 2).toFixed(1)}" y="${(y - 4).toFixed(1)}" text-anchor="middle">${f(it.v)}</text>`;
+    const H = h - pt - pb, bh = it.v / max * H, fh = (it.fr || 0) / max * H, x = 4 + i * bw + bw * .17, w = bw * .66, y = h - pb - bh, yf = y - fh;
+    if (it.v > 0) g += `<rect class="bar${i === hl ? ' hl' : ''}" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${bh.toFixed(1)}" rx="3"/>`;
+    if (it.fr > 0) g += `<rect class="bar fr" x="${x.toFixed(1)}" y="${yf.toFixed(1)}" width="${w.toFixed(1)}" height="${fh.toFixed(1)}" rx="3"/>`;
+    if (it.v + (it.fr || 0) > 0) g += `<text class="bv" x="${(x + w / 2).toFixed(1)}" y="${(yf - 4).toFixed(1)}" text-anchor="middle">${f(it.v + (it.fr || 0))}</text>`;
     if (it.l) g += `<text class="ax" x="${(x + w / 2).toFixed(1)}" y="${h - 6}" text-anchor="middle">${it.l}</text>`;
   });
   return `<svg viewBox="0 0 ${W} ${h}">${g}</svg>`;
@@ -772,9 +855,10 @@ function muscleChart(list) {
   });
   return `<svg viewBox="0 0 ${W} ${H}">${g}</svg><div class="legend"><span><i style="background:#4A86FF"></i>7 derniers jours</span><span><i style="background:#F2C230"></i>moyenne / sem. (4 sem. avant)</span></div>`;
 }
-function heatmap(list) {
+function heatmap(list, free = []) {
   const cols = 18, cell = 14, st = 17, left = 18, top = 16, W = left + cols * st, H = top + 7 * st;
-  const cnt = {}; list.forEach(s => { const k = dayKey(s.start); cnt[k] = (cnt[k] || 0) + 1; });
+  const cnt = {}, fc = {}; list.forEach(s => { const k = dayKey(s.start); cnt[k] = (cnt[k] || 0) + 1; });
+  free.forEach(s => { const k = dayKey(s.start); fc[k] = (fc[k] || 0) + 1; });
   const ws = new Date(weekStart(Date.now())); ws.setDate(ws.getDate() - 7 * (cols - 1));
   const now = Date.now(), today = dayKey(now);
   let g = '', lastM = -1;
@@ -782,11 +866,30 @@ function heatmap(list) {
     const d = new Date(ws); d.setDate(ws.getDate() + c * 7 + r);
     if (r === 0 && d.getMonth() !== lastM && c < cols - 1) { lastM = d.getMonth(); g += `<text class="ax" x="${left + c * st}" y="10">${d.toLocaleDateString('fr-FR', { month: 'short' })}</text>`; }
     if (d.getTime() > now) continue;
-    const n = cnt[dayKey(d)] || 0;
-    g += `<rect x="${left + c * st}" y="${top + r * st}" width="${cell}" height="${cell}" rx="3" class="hm${Math.min(n, 2)}${dayKey(d) === today ? ' hmt' : ''}"/>`;
+    const n = cnt[dayKey(d)] || 0, nf = fc[dayKey(d)] || 0, cls = n ? 'hm' + Math.min(n + nf, 2) : nf ? 'hmf' : 'hm0';
+    g += `<rect x="${left + c * st}" y="${top + r * st}" width="${cell}" height="${cell}" rx="3" class="${cls}${dayKey(d) === today ? ' hmt' : ''}"/>`;
   }
   ['L', '', 'M', '', 'V', '', 'D'].forEach((l, r) => { if (l) g += `<text class="ax" x="0" y="${top + r * st + 11}">${l}</text>`; });
   return `<svg viewBox="0 0 ${W} ${H}">${g}</svg>`;
+}
+const freeLegend = `<div class="legend"><span><i style="background:#4A86FF"></i>séance suivie</span><span><i style="background:#3FB56B"></i>séance libre</span></div>`;
+function groupChart(det, free, days) {
+  const from = days ? Date.now() - days * DAY : -Infinity, c = {}, f = {};
+  det.forEach(s => s.start >= from && sesGroups(s).forEach(g => c[g] = (c[g] || 0) + 1));
+  free.forEach(s => s.start >= from && sesGroups(s).forEach(g => f[g] = (f[g] || 0) + 1));
+  const tot = g => (c[g] || 0) + (f[g] || 0);
+  const gs = GROUPS.filter(tot).sort((a, b) => tot(b) - tot(a));
+  if (!gs.length) return '<p class="empty">Aucune séance sur cette période.</p>';
+  const W = 340, L = 70, rh = 28, span = W - L - 30, H = gs.length * rh + 4, max = Math.max(1, ...gs.map(tot)), X = v => v / max * span;
+  let g = '';
+  gs.forEach((m, i) => {
+    const y = i * rh + 4, a = c[m] || 0, b = f[m] || 0;
+    g += `<text class="ax" x="0" y="${y + 15}" style="font-size:12px">${m}</text><rect x="${L}" y="${y + 4}" width="${span}" height="14" rx="4" class="hm0"/>`;
+    if (a) g += `<rect x="${L}" y="${y + 4}" width="${X(a).toFixed(1)}" height="14" rx="4" class="bar hl"/>`;
+    if (b) g += `<rect x="${(L + X(a)).toFixed(1)}" y="${y + 4}" width="${X(b).toFixed(1)}" height="14" rx="4" class="bar fr"/>`;
+    g += `<text class="bv" x="${W - 2}" y="${y + 15}" text-anchor="end" style="font-size:12px">${tot(m)}</text>`;
+  });
+  return `<svg viewBox="0 0 ${W} ${H}">${g}</svg>${free.some(s => s.start >= from) ? freeLegend : ''}`;
 }
 
 /* ============ Vues ============ */
@@ -813,13 +916,20 @@ function backupBanner() {
     <button class="btn sm pri" data-a="backup">Sauvegarder</button></div>`;
 }
 
+function alertBanner() {
+  if (alertMode() !== 'ios' || S.meta.scReady) return '';
+  return `<div class="banner"><div><b>Alerte de repos app fermée</b>Crée le raccourci iOS, ça prend une minute.</div>
+    <button class="btn sm pri" data-a="goalert">Configurer</button></div>`;
+}
+
 function vHome() {
   const done = S.ses.filter(s => s.end);
   const ws = weekStart(Date.now()), days = ['L', 'M', 'M', 'J', 'V', 'S', 'D'];
   const week = days.map((l, i) => {
     const d = new Date(ws); d.setDate(d.getDate() + i);
-    const on = done.some(s => dayKey(s.start) === dayKey(d));
-    return `<div class="${on ? 'on' : ''}${dayKey(d) === dayKey(Date.now()) ? ' now' : ''}"><i></i>${l}</div>`;
+    const same = s => dayKey(s.start) === dayKey(d);
+    const cls = done.some(s => !isFree(s) && same(s)) ? 'on' : done.some(s => isFree(s) && same(s)) ? 'fr' : '';
+    return `<div class="${cls}${dayKey(d) === dayKey(Date.now()) ? ' now' : ''}"><i></i>${l}</div>`;
   }).join('');
   const nWeek = done.filter(s => s.start >= ws).length;
   const lastOf = t => sortedSes().find(s => s.tplId === t.id && s.end);
@@ -834,10 +944,10 @@ function vHome() {
   return `<div class="today"><h1>${nWeek ? nWeek + (nWeek > 1 ? ' séances' : ' séance') : 'Prêt ?'}</h1><span class="mu">${dLong(Date.now())}</span></div>
     <p class="mu">${nWeek ? 'cette semaine' : 'Aucune séance cette semaine pour l’instant.'}</p>
     <div class="week">${week}</div>
-    ${backupBanner()}
+    ${backupBanner()}${alertBanner()}
     <div class="sec">Démarrer une séance</div>
     ${tpls || '<p class="empty">Aucun modèle. Crée-en un dans Réglages.</p>'}
-    <button class="btn ghost wide" data-a="gotpl">Modifier les modèles</button>`;
+    <div class="row2"><button class="btn ghost" data-a="freenew">+ Séance libre</button><button class="btn ghost" data-a="gotpl">Modèles</button></div>`;
 }
 
 function vSession(s) {
@@ -910,12 +1020,18 @@ function editor(ex, x, j, lp) {
 
 function vHistory() {
   const list = sortedSes();
-  if (!list.length) return `<h1>Historique</h1><p class="empty">Tes séances apparaîtront ici dès la première terminée.</p>`;
-  let h = '<h1>Historique</h1>', lastM = '';
+  const add = '<button class="btn ghost wide" data-a="freenew">+ Ajouter une séance libre</button>';
+  if (!list.length) return `<h1>Historique</h1>${add}<p class="empty">Tes séances apparaîtront ici dès la première terminée.</p>`;
+  let h = '<h1>Historique</h1>' + add, lastM = '';
   for (const s of list) {
     const m = new Date(s.start).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
     if (m !== lastM) { h += `<div class="sec">${m.charAt(0).toUpperCase() + m.slice(1)}</div>`; lastM = m; }
     const pr = sesPR(s), d = new Date(s.start);
+    if (isFree(s)) {
+      h += `<button class="hrow free" data-a="opens" data-id="${s.id}"><div class="hdate"><b>${d.getDate()}</b><span>${d.toLocaleDateString('fr-FR', { weekday: 'short' })}</span></div>
+        <div class="hmain"><b>Séance libre</b><small>${esc(sesGroups(s).join(', '))}${s.dur ? ', ' + fmtLen(s.dur * 60000) : ''}${s.note ? ', ' + esc(s.note) : ''}</small></div></button>`;
+      continue;
+    }
     h += `<button class="hrow" data-a="opens" data-id="${s.id}"><div class="hdate"><b>${d.getDate()}</b><span>${d.toLocaleDateString('fr-FR', { weekday: 'short' })}</span></div>
       <div class="hmain"><b>${esc(s.name)}</b><small>${s.end ? `${tHM(s.start)}, ${fmtLen(s.end - s.start)}, ${plural(doneSets(s), 'série')}, ${fmtK(sesVol(s))} kg` : '<span class="live">En cours</span>'}</small></div>
       ${pr ? `<span class="prb">🏆 ${pr}</span>` : ''}</button>`;
@@ -952,19 +1068,24 @@ function exSeries(exId) {
   return out;
 }
 function vStats() {
-  const list = S.ses.filter(s => doneSets(s) > 0);
-  const ws0 = weekStart(Date.now()), weeks = [];
+  const list = S.ses.filter(s => !isFree(s) && doneSets(s) > 0), free = S.ses.filter(isFree);
+  const ws0 = weekStart(Date.now()), weeks = [], inW = (s, a, b) => s.start >= a && s.start < b;
   for (let i = 11; i >= 0; i--) {
     const d = new Date(ws0); d.setDate(d.getDate() - 7 * i); const a = d.getTime(); d.setDate(d.getDate() + 7); const b = d.getTime();
-    weeks.push({ v: list.filter(s => s.start >= a && s.start < b).length, l: i % 2 ? '' : dShort(a) });
+    weeks.push({ v: list.filter(s => inW(s, a, b)).length, fr: free.filter(s => inW(s, a, b)).length, l: i % 2 ? '' : dShort(a) });
   }
-  const avg = weeks.slice(0, 11).slice(-8).reduce((a, w) => a + w.v, 0) / 8;
+  const wt = w => w.v + w.fr, avg = weeks.slice(0, 11).slice(-8).reduce((a, w) => a + wt(w), 0) / 8;
+  const per = UI.grpPer === undefined ? 28 : UI.grpPer;
   let h = `<h1>Progrès</h1>
-    <div class="kpis" style="margin-top:16px"><div class="kpi"><b>${list.length}</b><small>séances</small></div>
-      <div class="kpi"><b>${weeks[11].v}</b><small>cette semaine</small></div>
+    <div class="kpis" style="margin-top:16px"><div class="kpi"><b>${list.length + free.length}</b><small>séances</small></div>
+      <div class="kpi"><b>${wt(weeks[11])}</b><small>cette semaine</small></div>
       <div class="kpi"><b>${fmt(Math.round(avg * 10) / 10)}</b><small>par semaine (8 sem.)</small></div></div>
-    <div class="chart"><h3>Séances par semaine</h3>${barChart(weeks, v => v, 11)}</div>
-    <div class="chart"><h3>Calendrier</h3>${heatmap(list)}</div>
+    <button class="btn wide" style="margin:0 0 12px" data-a="bilan">Bilan pour Claude</button>
+    <div class="chart"><h3>Séances par semaine</h3>${barChart(weeks, v => v, 11)}${free.length ? freeLegend : ''}</div>
+    <div class="chart"><h3>Calendrier</h3>${heatmap(list, free)}${free.length ? freeLegend : ''}</div>
+    <div class="chart"><h3>Séances par groupe musculaire</h3>
+      <div class="seg" style="margin:0 0 12px">${[[28, '4 semaines'], [91, '3 mois'], [0, 'Tout']].map(([v, l]) => `<button class="${per === v ? 'on' : ''}" data-a="grpper" data-v="${v}">${l}</button>`).join('')}</div>
+      ${groupChart(list, free, per)}</div>
     <div class="chart"><h3>Séries par muscle</h3>${muscleChart(list)}</div>`;
   const used = new Set(); list.forEach(s => s.items.forEach(i => i.sets.some(x => x.done) && used.add(i.exId)));
   const exs = Object.values(S.ex).filter(e => used.has(e.id)).sort((a, b) => a.name.localeCompare(b.name, 'fr'));
@@ -1014,16 +1135,41 @@ function vSettings() {
     <div class="card"><p class="mu" style="margin-bottom:4px">${lb ? 'Dernière sauvegarde ' + ago(lb) + ' (' + dShort(lb) + ')' : 'Jamais sauvegardé'}.</p>
       <p class="mu" style="font-size:14px">« Sauvegarder » ouvre le menu Partager : choisis « Enregistrer dans Fichiers » puis iCloud Drive.</p>
       <div class="row2"><button class="btn pri" data-a="backup">Sauvegarder</button><button class="btn" data-a="restore">Restaurer</button></div></div>
+    ${vAlert()}
     <div class="sec">Modèles de séance</div>
     <div class="card" style="padding:4px 14px">${S.tpl.map(t => `<div class="lrow"><button class="lmain" data-a="tpledit" data-id="${t.id}"><b>${esc(t.name)}</b><small>${t.exIds.length} exercices</small></button><span class="mu">›</span></div>`).join('')}</div>
     <button class="btn ghost wide" data-a="tplnew">+ Nouveau modèle</button>
     <p class="mu" style="font-size:13px;margin-top:24px;text-align:center">Fonte, données stockées uniquement sur cet iPhone.</p>`;
+}
+function vAlert() {
+  const m = alertMode(), ready = S.meta.scReady;
+  const desc = {
+    ios: 'À chaque série validée, Fonte lance le minuteur de l’iPhone. Il sonne même app fermée ou écran verrouillé, par-dessus ta musique.',
+    audio: 'Fonte joue une piste silencieuse terminée par un bip, mixée avec ta musique. Expérimental : selon la version d’iOS, le son peut se couper écran verrouillé.',
+    app: 'Bip uniquement quand Fonte est ouverte à l’écran.'
+  }[m];
+  const guide = `<details class="guide"${ready ? '' : ' open'}><summary>Créer le raccourci « ${SC_NAME} »</summary><ol>
+    <li>Ouvre l’app <b>Raccourcis</b> et touche <b>+</b> en haut à droite.</li>
+    <li>Touche le nom en haut, choisis <b>Renommer</b> et tape exactement <b>${SC_NAME}</b>.</li>
+    <li>Touche <b>Ajouter une action</b>, cherche <b>Démarrer le minuteur</b> et ajoute-la.</li>
+    <li>Touche la durée (« 30 ») et choisis la variable <b>Entrée du raccourci</b>. Touche ensuite l’unité et choisis <b>secondes</b>.</li>
+    <li>Touche <b>OK</b>, reviens dans Fonte et touche <b>Tester</b> : le minuteur de l’iPhone doit démarrer sur 10 s.</li>
+    <li>Pour revenir à Fonte après chaque série : glisse vers la droite sur la barre en bas de l’écran, ou touche <b>◀ Fonte</b> en haut à gauche.</li>
+    </ol><p class="mu" style="font-size:13px">Si le minuteur démarre à 0 ou ne démarre pas, ajoute avant « Démarrer le minuteur » l’action <b>Obtenir des nombres à partir de l’entrée</b> et utilise la variable <b>Nombres</b> comme durée.</p></details>`;
+  return `<div class="sec" id="alertSec">Alerte de fin de repos</div><div class="card">
+    <div class="seg">${[['ios', 'Minuteur iOS'], ['audio', 'Audio'], ['app', 'Dans l’app']].map(([v, l]) => `<button class="${m === v ? 'on' : ''}" data-a="alertmode" data-v="${v}">${l}</button>`).join('')}</div>
+    <p class="mu" style="font-size:14px;margin-top:10px">${desc}</p>
+    ${m === 'ios' && !ready ? '<p style="font-size:14px;margin-top:8px;color:var(--pr)">Crée le raccourci puis touche Tester. En attendant, Fonte bipe seulement quand elle est ouverte.</p>' : ''}
+    ${m === 'ios' ? guide : ''}
+    <button class="btn wide" data-a="alerttest">Tester (10 s)</button></div>`;
 }
 function vTplEdit() {
   const t = S.tpl.find(x => x.id === UI.tplId);
   if (!t) { UI.tplId = null; return vSettings(); }
   return `<button class="back" data-a="back">‹ Réglages</button>
     <label class="fl"><span class="lbl">Nom du modèle</span><input class="in" data-ch="tplname" value="${esc(t.name)}"></label>
+    <div class="fl"><span class="lbl">Groupes musculaires (pour les stats de fréquence)</span><div class="vars">${GROUPS.map(g =>
+      `<button class="${(t.groups || []).includes(g) ? 'on' : ''}" data-a="tgrp" data-v="${g}">${g}</button>`).join('')}</div></div>
     <div class="card" style="padding:4px 10px 4px 14px">${t.exIds.map((id, i) => { const e = S.ex[id]; if (!e) return '';
       const alts = ((t.alts || {})[id] || []).filter(a => S.ex[a]);
       return `<div class="slot"><div class="lrow"><button class="lmain" data-a="exedit" data-id="${id}"><b>${esc(e.name)}</b><small>${exDesc(e)}</small></button>
@@ -1163,6 +1309,99 @@ function finishSession() {
     <button class="btn pri wide" data-a="sheetclose">Fermer</button></div>` });
 }
 
+/* ============ Séance libre ============ */
+function freeForm(id) {
+  const s = id && S.ses.find(x => x.id === id);
+  UI.free = s ? { id, date: toLocalInput(s.start).slice(0, 10), groups: sesGroups(s).slice(), dur: s.dur ? String(s.dur) : '', note: s.note || '' }
+              : { id: null, date: toLocalInput(Date.now()).slice(0, 10), groups: [], dur: '', note: '' };
+  openSheet({ static: true, fn: () => { const f = UI.free; return `<h3>${f.id ? 'Séance libre' : 'Nouvelle séance libre'}</h3>
+    <label class="fl"><span class="lbl">Date</span><input type="date" class="in" id="fr_date" value="${f.date}"></label>
+    <div class="fl"><span class="lbl">Groupes travaillés</span><div class="vars">${GROUPS.map(g =>
+      `<button class="${f.groups.includes(g) ? 'on' : ''}" data-a="frg" data-v="${g}">${g}</button>`).join('')}</div></div>
+    <label class="fl"><span class="lbl">Durée en minutes (facultatif)</span><input class="in" id="fr_dur" inputmode="numeric" value="${esc(f.dur)}"></label>
+    <label class="fl"><span class="lbl">Note (facultatif)</span><textarea class="in" id="fr_note" rows="2" placeholder="Programme d’un collègue">${esc(f.note)}</textarea></label>
+    <div class="row2"><button class="btn" data-a="sheetclose">Annuler</button><button class="btn pri" data-a="frsave">Enregistrer</button></div>
+    ${f.id ? '<button class="lnk danger" data-a="frdel">Supprimer la séance</button>' : ''}`; } });
+}
+function readFree() {
+  const f = UI.free, v = id => { const el = $('#' + id); return el ? el.value : null; };
+  if (v('fr_date') !== null) f.date = v('fr_date');
+  if (v('fr_dur') !== null) f.dur = v('fr_dur');
+  if (v('fr_note') !== null) f.note = v('fr_note');
+}
+
+/* ============ Bilan pour Claude ============ */
+function bilan(weeks) {
+  const now = Date.now(), span = weeks * 7 * DAY, from = now - span, pfrom = from - span;
+  const inP = s => s.start >= from && s.start <= now, inPrev = s => s.start >= pfrom && s.start < from;
+  const det = S.ses.filter(s => !isFree(s) && s.end && doneSets(s) > 0), fr = S.ses.filter(isFree);
+  const dP = det.filter(inP).sort((a, b) => a.start - b.start), fP = fr.filter(inP).sort((a, b) => a.start - b.start), dPrev = det.filter(inPrev);
+  const nPrev = dPrev.length + fr.filter(inPrev).length, tot = dP.length + fP.length;
+  const L = [`Bilan Fonte sur ${weeks} semaines (du ${dShort(from)} au ${dShort(now)})`,
+    'Notation : poids × reps ; kg/bras = charge par bras ; ↘ = dégressive ; meilleure série = 1RM estimé (Epley) le plus haut.', ''];
+  if (!tot) return L.concat('Aucune séance sur la période.').join('\n');
+  L.push(`Séances : ${tot} (${dP.length} suivies, ${fP.length} libres), soit ${fmt(Math.round(tot / weeks * 10) / 10)} par semaine. Période précédente : ${nPrev}.`);
+  const gc = {}; dP.concat(fP).forEach(s => sesGroups(s).forEach(g => gc[g] = (gc[g] || 0) + 1));
+  L.push('Groupes travaillés (nombre de séances) : ' + Object.entries(gc).sort((a, b) => b[1] - a[1]).map(([g, n]) => `${g} ${n}`).join(', ') + '.');
+  if (fP.length) {
+    L.push('', 'Séances libres :');
+    fP.forEach(s => L.push(`- ${dShort(s.start)} : ${sesGroups(s).join(', ')}${s.dur ? `, ${s.dur} min` : ''}${s.note ? ` (${s.note})` : ''}`));
+  }
+  const setTxt = (ex, x) => ex.type === 'time' ? `${x.s || 0} s` : `${x.w ? fmt(x.w) + ' ' + unit(ex) : 'poids du corps'} × ${x.r}`;
+  const best = (list, id) => {
+    let b = null; const ex = S.ex[id];
+    for (const s of list) for (const it of s.items) if (it.exId === id) for (const x of it.sets) {
+      if (!x.done || (ex.type !== 'time' && x.r < 1)) continue;
+      const k = ex.type === 'time' ? (x.s || 0) : e1rm(x);
+      if (!b || k > b.k + 1e-9 || (Math.abs(k - b.k) < 1e-9 && x.w > b.x.w)) b = { k, x };
+    }
+    return b;
+  };
+  const did = (s, id) => s.items.some(i => i.exId === id && i.sets.some(x => x.done));
+  const ids = [...new Set(dP.flatMap(s => s.items.filter(i => i.sets.some(x => x.done)).map(i => i.exId)))].filter(id => S.ex[id])
+    .sort((a, b) => S.ex[a].name.localeCompare(S.ex[b].name, 'fr'));
+  if (ids.length) {
+    L.push('', 'Exercices (meilleure série de la période vs période précédente) :');
+    for (const id of ids) {
+      const ex = S.ex[id], cur = best(dP, id), prev = best(dPrev, id), n = dP.filter(s => did(s, id)).length;
+      const prs = [...new Set(dP.flatMap(s => s.items.filter(i => i.exId === id).flatMap(i => i.sets.filter(x => x.done).flatMap(x => x.pr || []))))];
+      let tr = 'nouveau';
+      if (cur && prev) { const p = (cur.k - prev.k) / (prev.k || 1); tr = p > .02 ? '↑' : p < -.02 ? '↓' : '→'; }
+      L.push(`- ${ex.name} : ${cur ? setTxt(ex, cur.x) : 'reps partielles uniquement'}${prev ? ' vs ' + setTxt(ex, prev.x) : ''} ${tr}, ${plural(n, 'séance')}${prs.length ? ', records : ' + prs.join(', ') : ''}`);
+    }
+  }
+  const pd = [], notes = [];
+  for (const s of dP) for (const it of s.items) {
+    const ex = S.ex[it.exId]; if (!ex) continue;
+    for (const x of it.sets) {
+      if (!x.done) continue;
+      if (ex.type !== 'time' && (x.p !== 'none' || (x.d || []).length))
+        pd.push(`- ${dShort(s.start)} ${ex.name} : ${setTxt(ex, x)}${x.p !== 'none' ? ` + partielle (${x.p === 'start' ? 'début' : 'presque'})` : ''}${(x.d || []).map(d => ` ↘ ${fmt(d.w)} × ${d.r}`).join('')}`);
+      if (x.n) notes.push(`- ${dShort(s.start)} ${ex.name} : ${x.n}`);
+    }
+  }
+  const cap = (arr, n) => arr.length > n ? arr.slice(-n).concat(`(et ${arr.length - n} autres plus anciennes)`) : arr;
+  if (pd.length) L.push('', 'Reps partielles et dégressives :', ...cap(pd, 10));
+  if (notes.length) L.push('', 'Notes d’exécution :', ...cap(notes, 10));
+  return L.join('\n');
+}
+function openBilan() {
+  if (!UI.bilanW) UI.bilanW = 4;
+  openSheet({ fn: () => { UI.bilanTxt = bilan(UI.bilanW); return `<h3>Bilan pour Claude</h3>
+    <div class="seg" style="margin-bottom:12px">${[2, 4, 8].map(w => `<button class="${UI.bilanW === w ? 'on' : ''}" data-a="bilanw" data-v="${w}">${w} semaines</button>`).join('')}</div>
+    <div class="bilan">${esc(UI.bilanTxt)}</div>
+    <p class="mu" style="font-size:13px;margin-top:8px">Colle ce texte dans ton projet Sport sur Claude pour faire le point.</p>
+    <div class="row2"><button class="btn pri" data-a="bilancopy">Copier</button><button class="btn" data-a="bilanshare">Partager</button></div>
+    <button class="lnk" data-a="sheetclose">Fermer</button>`; } });
+}
+async function copyText(t) {
+  try { await navigator.clipboard.writeText(t); return true; } catch (e) {}
+  try {
+    const ta = document.createElement('textarea'); ta.value = t; ta.style.cssText = 'position:fixed;opacity:0';
+    document.body.appendChild(ta); ta.select(); ta.setSelectionRange(0, t.length); const ok = document.execCommand('copy'); ta.remove(); return ok;
+  } catch (e) { return false; }
+}
+
 const ACT = {
   tab: d => { UI.tab = d.v; UI.sid = null; UI.tplId = null; UI.sheets = []; drawSheet(); render(); scrollTo(0, 0); },
   back: () => { if (UI.tab === 'hist') UI.sid = null; else UI.tplId = null; render(); scrollTo(0, 0); },
@@ -1252,10 +1491,55 @@ const ACT = {
     if (s.rest.end <= Date.now()) return closeRest();
     s.rest.total = Math.max(s.rest.total, (s.rest.end - Date.now()) / 1000);
     restFired = false; $('#rest').classList.remove('fin'); saveSes(s); tickRest();
+    const rem = (s.rest.end - Date.now()) / 1000;
+    if (effMode() === 'ios') openShortcut(rem); else if (effMode() === 'audio') playRestAudio(rem);
   },
 
   // Historique
-  opens: d => { UI.sid = d.id; render(); scrollTo(0, 0); },
+  opens: d => { const s = S.ses.find(x => x.id === d.id); if (s && isFree(s)) return freeForm(s.id); UI.sid = d.id; render(); scrollTo(0, 0); },
+
+  // Séance libre
+  freenew: () => freeForm(null),
+  frg: d => { readFree(); const g = UI.free.groups, i = g.indexOf(d.v); if (i >= 0) g.splice(i, 1); else g.push(d.v); drawSheet(); },
+  frsave: () => {
+    readFree(); const f = UI.free;
+    if (!f.groups.length) return toast('Choisis au moins un groupe musculaire');
+    const [y, m, dd] = String(f.date).split('-').map(Number); if (!y || !m || !dd) return toast('Date invalide');
+    const dur = parseInt(f.dur) > 0 ? Math.min(parseInt(f.dur), 600) : null;
+    const old = f.id && S.ses.find(x => x.id === f.id), day = new Date(y, m - 1, dd, 12).getTime();
+    const start = old && dayKey(old.start) === dayKey(day) ? old.start : dayKey(day) === dayKey(Date.now()) ? Date.now() - (dur || 0) * 60000 : day;
+    const s = old || { id: uid(), kind: 'free', name: 'Séance libre', items: [] };
+    Object.assign(s, { start, end: start + (dur || 0) * 60000, groups: GROUPS.filter(g => f.groups.includes(g)), dur, note: f.note.trim() });
+    if (!old) S.ses.push(s);
+    saveSes(s); UI.sheets.pop(); drawSheet(); render(); toast(old ? 'Séance modifiée' : 'Séance libre ajoutée');
+  },
+  frdel: () => {
+    const s = S.ses.find(x => x.id === UI.free.id); if (!s || !confirm('Supprimer cette séance libre ?')) return;
+    S.ses = S.ses.filter(x => x !== s); DB.del('sessions', s.id); UI.sheets.pop(); drawSheet(); render(); toast('Séance supprimée');
+  },
+  tgrp: d => { const t = S.tpl.find(x => x.id === UI.tplId); t.groups = t.groups || [];
+    const i = t.groups.indexOf(d.v); if (i >= 0) t.groups.splice(i, 1); else t.groups.push(d.v);
+    t.groups = GROUPS.filter(g => t.groups.includes(g)); saveTpl(t); render(); },
+  grpper: d => { UI.grpPer = +d.v; render(); },
+
+  // Bilan
+  bilan: () => openBilan(),
+  bilanw: d => { UI.bilanW = +d.v; drawSheet(); },
+  bilancopy: async () => toast(await copyText(UI.bilanTxt) ? 'Bilan copié' : 'Copie impossible : sélectionne le texte à la main'),
+  bilanshare: async () => {
+    if (!navigator.share) return ACT.bilancopy();
+    try { await navigator.share({ title: 'Bilan Fonte', text: UI.bilanTxt }); } catch (e) { if (e.name !== 'AbortError') ACT.bilancopy(); }
+  },
+
+  // Alerte
+  alertmode: d => { setMeta('alertMode', d.v); stopRestAudio(); render(); },
+  alerttest: () => {
+    const m = alertMode();
+    if (m === 'ios') { setMeta('scReady', true); UI.scTest = true; render(); openShortcut(10); }
+    else if (m === 'audio') { playRestAudio(10); toast('Bip dans 10 s : verrouille l’écran pour tester'); }
+    else { unlockAudio(); beep(); }
+  },
+  goalert: () => { UI.tab = 'set'; UI.tplId = null; UI.sid = null; render(); const el = $('#alertSec'); if (el) el.scrollIntoView({ block: 'start' }); },
   resume: () => { const s = S.ses.find(x => x.id === UI.sid); if (active() && active() !== s) return toast('Une autre séance est déjà en cours');
     setMeta('active', s.id); UI.tab = 'seance'; UI.sid = null; keepAwake(true); render(); if (s.rest) showRest(); },
   hedit: d => { UI.target = { sid: UI.sid, ii: +d.ii, k: +d.k }; openSheet({ kind: 'set', fn: () => {
@@ -1293,7 +1577,7 @@ const ACT = {
 
   // Modèles
   tpledit: d => { UI.tplId = d.id; render(); scrollTo(0, 0); },
-  tplnew: () => { const t = { id: uid(), name: 'Nouveau modèle', order: Date.now(), exIds: [] }; S.tpl.push(t); saveTpl(t); UI.tplId = t.id; render(); },
+  tplnew: () => { const t = { id: uid(), name: 'Nouveau modèle', order: Date.now(), exIds: [], groups: [] }; S.tpl.push(t); saveTpl(t); UI.tplId = t.id; render(); },
   tmove: d => { const t = S.tpl.find(x => x.id === UI.tplId), i = +d.i, j = i + (+d.v); if (j < 0 || j >= t.exIds.length) return;
     [t.exIds[i], t.exIds[j]] = [t.exIds[j], t.exIds[i]]; saveTpl(t); render(); },
   trm: d => { const t = S.tpl.find(x => x.id === UI.tplId); const [id] = t.exIds.splice(+d.i, 1); if (t.alts) delete t.alts[id]; saveTpl(t); render(); },
@@ -1358,7 +1642,7 @@ const ACT = {
 
   // Sauvegarde
   backup: async () => {
-    const data = { app: 'fonte', version: 1, exportedAt: new Date().toISOString(), exercises: Object.values(S.ex), templates: S.tpl, sessions: S.ses };
+    const data = { app: 'fonte', version: 2, exportedAt: new Date().toISOString(), exercises: Object.values(S.ex), templates: S.tpl, sessions: S.ses };
     const name = `fonte-sauvegarde-${toLocalInput(Date.now()).slice(0, 10)}.json`;
     const json = JSON.stringify(data);
     try {

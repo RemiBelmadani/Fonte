@@ -31,6 +31,19 @@ Aucune dépendance externe, aucun serveur, aucun compte : tout tient dans une pa
 - Séries par muscle : 7 derniers jours comparés à la moyenne hebdomadaire des 4 semaines précédentes (muscle principal choisi pour chaque exercice).
 - Fréquence : séances par semaine (12 dernières semaines) et calendrier type heatmap (18 semaines).
 
+**Alerte de fin de repos** (Réglages → Alerte de fin de repos)
+- **Minuteur iOS** (par défaut) : chaque série validée lance le Raccourci « Repos Fonte », qui démarre le minuteur natif de l'iPhone. Il sonne app fermée ou écran verrouillé, par-dessus la musique. Guide de création du raccourci et bouton « Tester » dans les réglages. Tant que le test n'a pas été fait, Fonte bipe seulement quand elle est ouverte.
+- **Audio** (expérimental) : piste générée de la durée du repos (silence puis bip), mixée avec la musique via `navigator.audioSession.type = "ambient"` quand c'est disponible.
+- **Dans l'app** : bip uniquement quand Fonte est à l'écran.
+
+**Séances libres**
+- « + Séance libre » (accueil ou historique) : date, groupes musculaires, durée et note facultatives, sans séries ni poids.
+- Comptées dans la fréquence (barres hebdo et calendrier, en vert), exclues des records et des courbes par exercice. Modifiables et supprimables depuis l'historique.
+- Chaque modèle de séance a ses groupes musculaires (devinés depuis son nom, modifiables). Stat « Séances par groupe musculaire » sur 4 semaines, 3 mois ou tout.
+
+**Bilan pour Claude** (onglet Progrès)
+- Résumé texte compact sur 2, 4 ou 8 semaines : nombre de séances, groupes travaillés, meilleure série par exercice comparée à la période précédente, tendance, records, reps partielles et dégressives, notes. Boutons Copier et Partager.
+
 **Sauvegarde**
 - « Sauvegarder » exporte un fichier JSON via le menu Partager d'iOS (choisir « Enregistrer dans Fichiers » puis iCloud Drive).
 - « Restaurer » réimporte ce fichier et remplace les données actuelles.
@@ -64,7 +77,7 @@ Aucune dépendance externe, aucun serveur, aucun compte : tout tient dans une pa
 1. Modifier le fichier voulu et le renvoyer sur GitHub (glisser-déposer au même endroit, il remplace l'ancien).
 2. Sur l'iPhone, ouvrir l'app avec du réseau : la nouvelle version est téléchargée en arrière-plan et s'affiche au lancement suivant.
 
-Si une mise à jour semble bloquée, changer `fonte-v1` en `fonte-v2` en haut de `sw.js` force le renouvellement du cache.
+Si une mise à jour semble bloquée, augmenter le numéro de `CACHE` en haut de `sw.js` (par exemple `fonte-v3` → `fonte-v4`) force le renouvellement du cache.
 
 Les données ne sont pas touchées par une mise à jour.
 

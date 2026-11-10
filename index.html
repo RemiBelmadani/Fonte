@@ -312,6 +312,7 @@ select.in{-webkit-appearance:none;appearance:none;font-weight:600;background-ima
 <script>
 'use strict';
 /* ============ Outils ============ */
+const APP_VERSION = 'v4';   // à garder identique au CACHE de sw.js
 const DAY = 864e5;
 const $ = (s, r = document) => r.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -1139,7 +1140,7 @@ function vSettings() {
     <div class="sec">Modèles de séance</div>
     <div class="card" style="padding:4px 14px">${S.tpl.map(t => `<div class="lrow"><button class="lmain" data-a="tpledit" data-id="${t.id}"><b>${esc(t.name)}</b><small>${t.exIds.length} exercices</small></button><span class="mu">›</span></div>`).join('')}</div>
     <button class="btn ghost wide" data-a="tplnew">+ Nouveau modèle</button>
-    <p class="mu" style="font-size:13px;margin-top:24px;text-align:center">Fonte, données stockées uniquement sur cet iPhone.</p>`;
+    <p class="mu" style="font-size:13px;margin-top:24px;text-align:center">Fonte ${APP_VERSION}, données stockées uniquement sur cet iPhone.</p>`;
 }
 function vAlert() {
   const m = alertMode(), ready = S.meta.scReady;

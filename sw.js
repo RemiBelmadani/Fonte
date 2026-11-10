@@ -2,7 +2,9 @@
 // Stratégie : on sert TOUJOURS la version en cache (instantané, marche sans réseau),
 // et en parallèle on télécharge la nouvelle version si le réseau est là.
 // => Une mise à jour publiée sur GitHub apparaît au lancement suivant.
-const CACHE = 'fonte-v3';
+// Les téléchargements contournent le cache HTTP de Safari (GitHub Pages le garde 10 min),
+// sinon une nouvelle version pourrait mettre en cache l'ancienne page.
+const CACHE = 'fonte-v4';
 const ASSETS = [
   './',
   './index.html',
@@ -13,7 +15,7 @@ const ASSETS = [
 ];
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS.map((u) => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', (e) => {
@@ -32,7 +34,7 @@ self.addEventListener('fetch', (e) => {
   e.respondWith((async () => {
     const cache = await caches.open(CACHE);
     const cached = await cache.match(key, { ignoreSearch: true });
-    const network = fetch(req)
+    const network = fetch(req, { cache: 'no-cache' })
       .then((res) => {
         if (res && res.ok && !res.redirected) cache.put(key, res.clone());
         return res;
